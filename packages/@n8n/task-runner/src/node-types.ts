@@ -6,12 +6,19 @@ import {
 	type INodeTypes,
 	type IVersionedNodeType,
 } from 'n8n-workflow';
-
 import type { NeededNodeType } from './runner-types';
 
 type VersionedTypes = Map<number, INodeTypeDescription>;
 
 export const DEFAULT_NODETYPE_VERSION = 1;
+
+// Common AI Agent tool node name patterns
+const AI_AGENT_TOOL_PATTERNS = [
+	'@n8n/n8n-nodes-langchain.tool',
+	'@n8n/n8n-nodes-langchain.ToolCode',
+	'@n8n/n8n-nodes-langchain.ToolWorkflow',
+	'@n8n/n8n-nodes-langchain.ToolHttpRequest',
+];
 
 export class TaskRunnerNodeTypes implements INodeTypes {
 	private nodeTypesByVersion: Map<string, VersionedTypes>;
@@ -30,6 +37,7 @@ export class TaskRunnerNodeTypes implements INodeTypes {
 
 			const versioned: VersionedTypes =
 				versionedTypes.get(nt.name) ?? new Map<number, INodeTypeDescription>();
+
 			for (const version of versions) {
 				versioned.set(version, { ...versioned.get(version), ...nt });
 			}
@@ -47,13 +55,27 @@ export class TaskRunnerNodeTypes implements INodeTypes {
 
 	getByNameAndVersion(nodeType: string, version?: number): INodeType {
 		const versions = this.nodeTypesByVersion.get(nodeType);
+
 		if (!versions) {
+			// Enhanced error handling for missing node types
+			if (this.isAIAgentToolNode(nodeType)) {
+				throw new ApplicationError(
+					`AI Agent tool node type '${nodeType}' not found. Ensure tool nodes are properly registered.`,
+					{ level: 'error', extra: { nodeType, version } },
+				);
+			}
 			return undefined as unknown as INodeType;
 		}
+
 		const nodeVersion = versions.get(version ?? Math.max(...versions.keys()));
+
 		if (!nodeVersion) {
-			return undefined as unknown as INodeType;
+			throw new ApplicationError(
+				`Version ${version} of node type '${nodeType}' not found`,
+				{ level: 'error', extra: { nodeType, version, availableVersions: Array.from(versions.keys()) } },
+			);
 		}
+
 		return {
 			description: nodeVersion,
 		};
@@ -83,10 +105,26 @@ export class TaskRunnerNodeTypes implements INodeTypes {
 	onlyUnknown(nodeTypes: NeededNodeType[]) {
 		return nodeTypes.filter(({ name, version }) => {
 			const existingVersions = this.nodeTypesByVersion.get(name);
-
 			if (!existingVersions) return true;
-
 			return !existingVersions.has(version);
 		});
+	}
+
+	/** Check if a node type is an AI Agent tool node */
+	private isAIAgentToolNode(nodeType: string): boolean {
+		return AI_AGENT_TOOL_PATTERNS.some((pattern) => nodeType.startsWith(pattern));
+	}
+
+	/** Get all registered node types (useful for debugging) */
+	getAllNodeTypeNames(): string[] {
+		return Array.from(this.nodeTypesByVersion.keys());
+	}
+
+	/** Check if a specific node type is registered */
+	hasNodeType(nodeType: string, version?: number): boolean {
+		const versions = this.nodeTypesByVersion.get(nodeType);
+		if (!versions) return false;
+		if (version === undefined) return true;
+		return versions.has(version);
 	}
 }
